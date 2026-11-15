@@ -16,12 +16,10 @@ The CLI exports `SPAWNDROID_WD_URL`, `SPAWNDROID_UDID` and
 `SPAWNDROID_APP_PACKAGE` into `mvn test`. The GitHub Action does the same:
 
 ```yaml
-- uses: spawndroid/cli@v0.1.0
+- run: npx spawndroid init --command "mvn test" --report target/surefire-reports/TEST-com.spawndroid.example.CheckoutTest.xml
+- uses: spawndroid/cli@v0.1.1
   with:
     api-key: ${{ secrets.SPAWNDROID_API_KEY }}
-    app-path: app/build/outputs/apk/debug/app-debug.apk
-    command: mvn test
-    report-path: target/surefire-reports/TEST-com.spawndroid.example.CheckoutTest.xml
 ```
 
 ## Files

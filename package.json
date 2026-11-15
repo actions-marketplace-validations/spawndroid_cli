@@ -1,6 +1,6 @@
 {
   "name": "spawndroid",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run Android tests on hosted devices from any CI.",
   "type": "module",
   "bin": {

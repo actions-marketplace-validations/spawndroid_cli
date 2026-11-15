@@ -20,11 +20,10 @@ npx spawndroid run path/to/app-debug.apk --profile android-14-phone -- pytest -q
 Or use the GitHub Action:
 
 ```yaml
-- uses: spawndroid/cli@v0.1.0
+- run: npx spawndroid init --command "pytest -q --junitxml=reports/junit.xml" --report reports/junit.xml
+- uses: spawndroid/cli@v0.1.1
   with:
     api-key: ${{ secrets.SPAWNDROID_API_KEY }}
-    app-path: app/build/outputs/apk/debug/app-debug.apk
-    command: pytest -q
 ```
 
 The fixture expects `SPAWNDROID_WD_URL`, `SPAWNDROID_UDID` and
