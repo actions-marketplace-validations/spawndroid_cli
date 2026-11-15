@@ -1,0 +1,35 @@
+{
+  "name": "spawndroid",
+  "version": "0.1.0",
+  "description": "Run Android tests on hosted devices from any CI.",
+  "type": "module",
+  "bin": {
+    "spawndroid": "src/spawndroid.mjs"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/spawndroid.test.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spawndroid/cli.git"
+  },
+  "homepage": "https://spawndroid.io",
+  "bugs": {
+    "url": "https://github.com/spawndroid/cli/issues"
+  },
+  "keywords": [
+    "android",
+    "appium",
+    "webdriver",
+    "emulator",
+    "testing",
+    "ci"
+  ]
+}
