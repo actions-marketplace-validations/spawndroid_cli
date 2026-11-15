@@ -36,15 +36,29 @@ export async function collectChecks({ spec, specDir, api }) {
   const problems = []
   const warnings = []
 
+  let probe = null
   try {
-    const probe = await api.probe()
+    probe = await api.probe()
     if (!probe.ok) {
       problems.push(
         "the API key was rejected (401/403) — create a key with the upload scope in API & CI/CD → API keys"
       )
+    } else if (probe.scope === "read") {
+      problems.push(
+        'the API key is scoped to "read"; running tests needs the "upload" scope'
+      )
     }
   } catch (error) {
     problems.push(`could not reach ${api.baseUrl}: ${error.message}`)
+  }
+
+  if (probe?.maxSessionMinutes) {
+    warnings.push(
+      `your plan (${probe.planLabel ?? probe.plan}) stops a session after ${probe.maxSessionMinutes} minutes of device time`
+    )
+  }
+  if (probe?.slots === 0) {
+    warnings.push("your plan allows no parallel runners; a start will be refused")
   }
 
   const appPath = resolve(specDir, spec.app)

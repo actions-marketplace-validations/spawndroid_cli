@@ -41,22 +41,37 @@ export function createApi({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
     baseUrl: root,
 
     /**
-     * Validate the key without spending anything: an unknown session is a 404
-     * for a valid key and a 401/403 for a bad or under-scoped one.
+     * What the key can do. `/whoami` is the real answer; on deployments that
+     * predate it, fall back to the session probe (404 means the key is valid).
      */
     async probe() {
       try {
-        await request(`/api/v1/sessions/probe-${randomUUID()}`)
-        return { ok: true }
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 404) return { ok: true }
-        if (
-          error instanceof ApiError &&
-          (error.status === 401 || error.status === 403)
-        ) {
-          return { ok: false, error }
+        const body = await request("/api/v1/whoami")
+        return {
+          ok: true,
+          scope: typeof body?.scope === "string" ? body.scope : null,
+          plan: typeof body?.plan === "string" ? body.plan : null,
+          planLabel: typeof body?.planLabel === "string" ? body.planLabel : null,
+          slots: typeof body?.slots === "number" ? body.slots : null,
+          maxSessionMinutes:
+            typeof body?.maxSessionMinutes === "number" ? body.maxSessionMinutes : null,
         }
-        throw error
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error
+        if (error.status === 401 || error.status === 403) return { ok: false, error }
+        if (error.status !== 404) throw error
+        try {
+          await request(`/api/v1/sessions/probe-${randomUUID()}`)
+          return { ok: true, scope: null, plan: null, planLabel: null, slots: null, maxSessionMinutes: null }
+        } catch (fallbackError) {
+          if (
+            fallbackError instanceof ApiError &&
+            (fallbackError.status === 401 || fallbackError.status === 403)
+          ) {
+            return { ok: false, error: fallbackError }
+          }
+          throw fallbackError
+        }
       }
     },
 

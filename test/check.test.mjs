@@ -35,6 +35,27 @@ test("a slug spec with a valid key passes", async () => {
   assert.deepEqual(warnings, [])
 })
 
+test("a read-scoped key is a problem", async () => {
+  const { problems } = await collectChecks({
+    spec: spec(),
+    specDir: process.cwd(),
+    api: { probe: async () => ({ ok: true, scope: "read" }), baseUrl: "https://example.invalid" },
+  })
+  assert.match(problems.join("\n"), /needs the "upload" scope/)
+})
+
+test("the plan's session cap is surfaced as a warning", async () => {
+  const { warnings } = await collectChecks({
+    spec: spec(),
+    specDir: process.cwd(),
+    api: {
+      probe: async () => ({ ok: true, scope: "upload", plan: "free", planLabel: "Hobby", maxSessionMinutes: 15 }),
+      baseUrl: "https://example.invalid",
+    },
+  })
+  assert.match(warnings.join("\n"), /stops a session after 15 minutes/)
+})
+
 test("a rejected key is a problem", async () => {
   const { problems } = await collectChecks({
     spec: spec(),
