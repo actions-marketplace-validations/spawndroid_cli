@@ -1,111 +1,81 @@
 #!/usr/bin/env node
 /**
- * SpawnDroid CLI — upload, start, wait, run, report.
+ * spawndroid — run Android tests on hosted devices.
  *
- * No dependencies: Node 22 has fetch, FormData and Blob. The CLI is deliberately
- * small because the Action already covers GitHub Actions; this is for local
- * runs, GitLab, Jenkins and any other CI that can execute a command.
+ * One artifact owns the journey: `init` writes the spec and workflow, `check`
+ * names the walls, `run` executes the lifecycle. The step-by-step commands
+ * (upload/start/wait/report) stay for pipelines that drive the API themselves.
  */
 
-import { spawn } from "node:child_process"
-import { readFile } from "node:fs/promises"
-import { basename } from "node:path"
+import { appendFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
+import { randomUUID } from "node:crypto"
+import { dirname, resolve } from "node:path"
 import { parseArgs } from "node:util"
+
+import { createApi } from "./api.mjs"
+import { collectChecks, planNotes } from "./check.mjs"
+import {
+  DEFAULT_TIMEOUT_SECONDS,
+  SPEC_FILE,
+  SpecError,
+  loadSpec,
+} from "./config.mjs"
+import { runInit } from "./init.mjs"
+import { EXIT_INFRA, EXIT_PASSED, executeRun } from "./run.mjs"
 
 const API_KEY = process.env.SPAWNDROID_API_KEY?.trim()
 const API_URL = (
   process.env.SPAWNDROID_URL?.trim() || "https://app.spawndroid.io"
 ).replace(/\/$/, "")
 
-const HELP = `spawndroid — hosted Android sessions for Appium and manual runs
+const VERSION = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+).version
+
+const HELP = `spawndroid — run Android tests on hosted devices
 
 Usage:
+  spawndroid init [--app <apk>] [--command <cmd>] [--report <xml>] [--profile <id>]
+  spawndroid check [--config <path>]
+  spawndroid run [--config <path>] [--profile <id>] [--timeout <seconds>] [-- <command…>]
   spawndroid upload <app.apk> [--json]
   spawndroid start --app <slug> [--profile <id>] [--json]
-  spawndroid wait <sessionId> [--timeout <seconds>]
+  spawndroid wait <sessionId> [--timeout <seconds>] [--json]
   spawndroid report <sessionId> --result passed|failed
-  spawndroid run <app.apk> [--profile <id>] [--timeout <seconds>] -- <command...>
+  spawndroid --version
 
 Environment:
-  SPAWNDROID_API_KEY   required; workspace API key with upload scope
+  SPAWNDROID_API_KEY   workspace API key with upload scope (required)
   SPAWNDROID_URL       console origin (default https://app.spawndroid.io)
+  SPAWNDROID_CONFIG    spec path (default spawndroid.yaml)
+
+Exit codes:
+  0 tests passed   1 tests failed   2 infrastructure or setup failed
 
 Examples:
-  spawndroid run app-debug.apk -- npx wdio run wdio.conf.js
-  spawndroid upload app-debug.apk
-  spawndroid start --app checkout --profile android-14-phone
-  spawndroid wait sess_123
-  spawndroid report sess_123 --result passed
+  npx spawndroid init
+  npx spawndroid check
+  npx spawndroid run
+  npx spawndroid run app-debug.apk -- npx wdio run wdio.conf.js
 `
 
-function fail(message) {
+function fail(message, code = EXIT_INFRA) {
   console.error(`spawndroid: ${message}`)
-  process.exit(1)
+  return code
 }
 
-function requireKey() {
-  if (!API_KEY) fail("SPAWNDROID_API_KEY is required")
-}
-
-async function api(path, init = {}) {
-  requireKey()
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      ...(init.headers ?? {}),
-    },
-  })
-  const body = await response.json().catch(() => null)
-  if (!response.ok) {
-    const detail =
-      body?.detail || body?.error || body?.title || response.statusText
-    fail(`${response.status} ${detail}`)
+function api() {
+  if (!API_KEY) {
+    throw new SpecError([
+      "SPAWNDROID_API_KEY is not set — create a key in API & CI/CD → API keys (upload scope)",
+    ])
   }
-  return body
+  return createApi({ baseUrl: API_URL, apiKey: API_KEY })
 }
 
-async function upload(apk) {
-  const bytes = await readFile(apk)
-  const form = new FormData()
-  form.append("file", new Blob([bytes]), basename(apk))
-  const body = await api("/api/apps", { method: "POST", body: form })
-  return body?.app
-}
-
-async function start(app, profileId) {
-  const body = await api("/api/v1/sessions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      artifactId: app,
-      ...(profileId ? { profileId } : {}),
-    }),
-  })
-  return body
-}
-
-async function waitFor(sessionId, timeoutSeconds) {
-  const deadline = Date.now() + timeoutSeconds * 1000
-  for (;;) {
-    const body = await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}`)
-    if (body?.state === "ready") return { ...body, sessionId }
-    if (body?.state === "failed") {
-      fail(`session failed: ${body.error || body.errorCode || "unknown"}`)
-    }
-    if (Date.now() > deadline) {
-      fail(`timed out after ${timeoutSeconds}s waiting for ${sessionId}`)
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5000))
-  }
-}
-
-async function report(sessionId, result) {
-  await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ result }),
-  })
+function specPathOf(values) {
+  return resolve(values.config ?? process.env.SPAWNDROID_CONFIG ?? SPEC_FILE)
 }
 
 function sessionEnv(view) {
@@ -113,121 +83,233 @@ function sessionEnv(view) {
     SPAWNDROID_WD_URL: view.webdriverUrl,
     SPAWNDROID_UDID: view.device?.serial,
     SPAWNDROID_APP_PACKAGE: view.app?.package,
-    SPAWNDROID_APP: view.app?.slug,
     SPAWNDROID_SESSION_ID: view.sessionId,
+  }
+}
+
+async function writeGitHubOutputs({ sessionId, result, runUrl }) {
+  const file = process.env.GITHUB_OUTPUT
+  if (!file || !sessionId) return
+  const lines = [`session-id=${sessionId}`, `result=${result}`]
+  if (runUrl) lines.push(`run-url=${runUrl}`)
+  await appendFile(file, `${lines.join("\n")}\n`)
+}
+
+function parseSafe(argv, options) {
+  try {
+    return {
+      ok: true,
+      value: parseArgs({ args: argv, allowPositionals: true, options }),
+    }
+  } catch (error) {
+    return { ok: false, error }
   }
 }
 
 async function main() {
   const argv = process.argv.slice(2)
-  const separator = argv.indexOf("--")
-  const head = separator >= 0 ? argv.slice(0, separator) : argv
-  const commandArgs = separator >= 0 ? argv.slice(separator + 1) : []
-  const [command, ...positionals] = head
+  const [command] = argv
 
-  if (!command || command === "--help" || command === "-h") {
+  if (!command || command === "--help" || command === "-h" || command === "help") {
     console.log(HELP)
-    return
+    return EXIT_PASSED
+  }
+  if (command === "--version" || command === "-v") {
+    console.log(`spawndroid ${VERSION}`)
+    return EXIT_PASSED
+  }
+
+  if (command === "init") {
+    const parsed = parseSafe(argv.slice(1), {
+      config: { type: "string" },
+      app: { type: "string" },
+      command: { type: "string" },
+      report: { type: "string" },
+      profile: { type: "string" },
+      timeout: { type: "string" },
+      force: { type: "boolean", default: false },
+      "no-workflow": { type: "boolean", default: false },
+    })
+    if (!parsed.ok) return fail(parsed.error.message)
+    const { values } = parsed.value
+    const configPath = specPathOf(values)
+    return runInit({
+      dir: dirname(configPath),
+      configPath,
+      flags: {
+        app: values.app,
+        command: values.command,
+        report: values.report,
+        profile: values.profile,
+        timeout: values.timeout,
+        force: values.force,
+        workflow: !values["no-workflow"],
+      },
+      version: VERSION,
+    })
+  }
+
+  if (command === "check") {
+    const parsed = parseSafe(argv.slice(1), { config: { type: "string" } })
+    if (!parsed.ok) return fail(parsed.error.message)
+    const specPath = specPathOf(parsed.value.values)
+    const spec = loadSpec(specPath)
+    if (!API_KEY) {
+      console.error(
+        "spawndroid: SPAWNDROID_API_KEY is not set — create a key in API & CI/CD → API keys (upload scope)"
+      )
+      return EXIT_INFRA
+    }
+    const { problems, warnings } = await collectChecks({
+      spec,
+      specDir: dirname(specPath),
+      api: api(),
+    })
+    for (const warning of warnings) console.error(`warning: ${warning}`)
+    if (problems.length) {
+      for (const problem of problems) console.error(`problem: ${problem}`)
+      return EXIT_INFRA
+    }
+    for (const line of planNotes()) console.error(line)
+    console.log("ok")
+    return EXIT_PASSED
   }
 
   if (command === "run") {
-    const { values, positionals: runPositionals } = parseArgs({
-      args: head.slice(1),
-      allowPositionals: true,
-      options: {
-        profile: { type: "string" },
-        timeout: { type: "string", default: "600" },
-      },
+    const rest = argv.slice(1)
+    const separator = rest.indexOf("--")
+    const head = separator >= 0 ? rest.slice(0, separator) : rest
+    const commandArgs = separator >= 0 ? rest.slice(separator + 1) : []
+    const parsed = parseSafe(head, {
+      config: { type: "string" },
+      profile: { type: "string" },
+      timeout: { type: "string" },
     })
-    const apk = runPositionals[0]
-    if (!apk) fail("run requires an APK path")
-    if (commandArgs.length === 0) fail("run requires a command after --")
+    if (!parsed.ok) return fail(parsed.error.message)
+    const { values, positionals } = parsed.value
 
-    const app = await upload(apk)
-    console.error(`uploaded ${app.slug} (v${app.version})`)
-    const started = await start(app.slug, values.profile)
-    const view = await waitFor(started.sessionId, Number(values.timeout))
-    console.error(`ready: ${view.webdriverUrl}`)
+    let spec
+    let specDir
+    if (positionals.length > 0) {
+      const timeout = values.timeout ? Number(values.timeout) : DEFAULT_TIMEOUT_SECONDS
+      spec = {
+        version: 1,
+        app: positionals[0],
+        profile: values.profile ?? null,
+        command: commandArgs,
+        fixtures: [],
+        report: null,
+        timeout,
+      }
+      specDir = process.cwd()
+      if (commandArgs.length === 0) {
+        return fail("run <app.apk> requires a command after --")
+      }
+    } else {
+      const specPath = specPathOf(values)
+      spec = loadSpec(specPath)
+      specDir = dirname(specPath)
+      if (values.profile) spec.profile = values.profile
+      if (values.timeout) spec.timeout = Number(values.timeout)
+      if (commandArgs.length > 0) spec.command = commandArgs
+    }
 
-    const child = spawn(commandArgs[0], commandArgs.slice(1), {
-      stdio: "inherit",
-      env: { ...process.env, ...sessionEnv(view) },
-    })
-    const code = await new Promise((resolve) => child.on("exit", resolve))
-    await report(view.sessionId, code === 0 ? "passed" : "failed")
-    process.exit(code ?? 1)
+    const outcome = await executeRun({ spec, specDir, api: api() })
+    await writeGitHubOutputs(outcome)
+    if (outcome.runUrl) console.error(`run: ${outcome.runUrl}`)
+    return outcome.exitCode
   }
 
   if (command === "upload") {
-    const { values, positionals: uploadPositionals } = parseArgs({
-      args: head.slice(1),
-      allowPositionals: true,
-      options: { json: { type: "boolean", default: false } },
+    const parsed = parseSafe(argv.slice(1), {
+      json: { type: "boolean", default: false },
     })
-    const apk = uploadPositionals[0]
-    if (!apk) fail("upload requires an APK path")
-    const app = await upload(apk)
-    console.log(values.json ? JSON.stringify(app, null, 2) : app.slug)
-    return
+    if (!parsed.ok) return fail(parsed.error.message)
+    const { values, positionals } = parsed.value
+    if (!positionals[0]) return fail("upload requires an APK path")
+    const app = await api().uploadApk(positionals[0])
+    console.log(values.json ? JSON.stringify(app, null, 2) : app?.slug)
+    return EXIT_PASSED
   }
 
   if (command === "start") {
-    const { values } = parseArgs({
-      args: head.slice(1),
-      allowPositionals: false,
-      options: {
-        app: { type: "string" },
-        profile: { type: "string" },
-        json: { type: "boolean", default: false },
-      },
+    const parsed = parseSafe(argv.slice(1), {
+      app: { type: "string" },
+      profile: { type: "string" },
+      json: { type: "boolean", default: false },
     })
-    if (!values.app) fail("start requires --app <slug>")
-    const view = await start(values.app, values.profile)
-    console.log(values.json ? JSON.stringify(view, null, 2) : view.sessionId)
-    return
+    if (!parsed.ok) return fail(parsed.error.message)
+    const { values } = parsed.value
+    if (!values.app) return fail("start requires --app <slug>")
+    const view = await api().createSession(
+      {
+        artifactId: values.app,
+        ...(values.profile ? { profileId: values.profile } : {}),
+      },
+      `spawndroid-${randomUUID()}`
+    )
+    console.log(values.json ? JSON.stringify(view, null, 2) : view?.sessionId)
+    return EXIT_PASSED
   }
 
   if (command === "wait") {
-    const { values, positionals: waitPositionals } = parseArgs({
-      args: head.slice(1),
-      allowPositionals: true,
-      options: {
-        timeout: { type: "string", default: "600" },
-        json: { type: "boolean", default: false },
-      },
+    const parsed = parseSafe(argv.slice(1), {
+      timeout: { type: "string", default: "600" },
+      json: { type: "boolean", default: false },
     })
-    const sessionId = waitPositionals[0]
-    if (!sessionId) fail("wait requires a session id")
-    const view = await waitFor(sessionId, Number(values.timeout))
-    if (values.json) {
-      console.log(JSON.stringify(view, null, 2))
-    } else {
-      for (const [key, value] of Object.entries(sessionEnv(view))) {
-        console.log(`${key}=${value}`)
+    if (!parsed.ok) return fail(parsed.error.message)
+    const { values, positionals } = parsed.value
+    if (!positionals[0]) return fail("wait requires a session id")
+    const sessionId = positionals[0]
+    const client = api()
+    const deadline = Date.now() + Number(values.timeout) * 1000
+    for (;;) {
+      const view = await client.getSession(sessionId)
+      if (view?.state === "ready") {
+        if (values.json) {
+          console.log(JSON.stringify(view, null, 2))
+        } else {
+          for (const [key, value] of Object.entries(sessionEnv({ ...view, sessionId }))) {
+            console.log(`${key}=${value}`)
+          }
+        }
+        return EXIT_PASSED
       }
+      if (view?.state === "failed") {
+        return fail(`session failed: ${view.errorCode ?? view.error ?? "unknown"}`)
+      }
+      if (Date.now() > deadline) {
+        return fail(`timed out after ${values.timeout}s waiting for ${sessionId}`)
+      }
+      await new Promise((done) => setTimeout(done, 5000))
     }
-    return
   }
 
   if (command === "report") {
-    const { values, positionals: reportPositionals } = parseArgs({
-      args: head.slice(1),
-      allowPositionals: true,
-      options: { result: { type: "string" } },
-    })
-    const sessionId = reportPositionals[0]
-    if (!sessionId) fail("report requires a session id")
+    const parsed = parseSafe(argv.slice(1), { result: { type: "string" } })
+    if (!parsed.ok) return fail(parsed.error.message)
+    const { values, positionals } = parsed.value
+    if (!positionals[0]) return fail("report requires a session id")
     if (values.result !== "passed" && values.result !== "failed") {
-      fail("report requires --result passed|failed")
+      return fail("report requires --result passed|failed")
     }
-    await report(sessionId, values.result)
-    console.log(`reported ${values.result} for ${sessionId}`)
-    return
+    await api().endSession(positionals[0], values.result)
+    console.log(`reported ${values.result} for ${positionals[0]}`)
+    return EXIT_PASSED
   }
 
-  fail(`unknown command: ${command}\n\n${HELP}`)
+  return fail(`unknown command: ${command}\n\n${HELP}`)
 }
 
-main().catch((error) => {
-  fail(error instanceof Error ? error.message : String(error))
-})
+main()
+  .then((code) => {
+    process.exitCode = code
+  })
+  .catch((error) => {
+    if (error instanceof SpecError) {
+      for (const problem of error.problems) console.error(`spawndroid: ${problem}`)
+    } else {
+      console.error(`spawndroid: ${error?.message ?? error}`)
+    }
+    process.exitCode = EXIT_INFRA
+  })

@@ -2,31 +2,81 @@
 
 Run Android tests on hosted devices from any CI.
 
-Upload an APK, boot a real device, run your test command against it, and keep
-the result along with the logcat and screen recording.
+Upload a build, boot a real device, run your test command against it, and keep
+the result along with the JUnit report, logcat and screen recording.
 
 ## Quick start
 
 ```bash
-export SPAWNDROID_API_KEY=spawn_live_…   # workspace key with `upload` scope
-
-npx spawndroid run app/build/outputs/apk/debug/app-debug.apk -- \
-  npx wdio run wdio.conf.js
+npx spawndroid init                                  # detect the project, write the spec + workflow
+export SPAWNDROID_API_KEY=spawn_live_…               # API & CI/CD → API keys, upload scope
+npx spawndroid check                                 # name the walls before the first run
+npx spawndroid run                                   # upload → boot → test → report → teardown
 ```
 
-`run` uploads the build, starts a session, waits for the device, executes the
-command with the session exported into its environment, then reports the result
-and tears the device down.
+`init` reads the project (Gradle, Maven, WebdriverIO, pytest), prints what it
+inferred, and writes `spawndroid.yaml` plus
+`.github/workflows/spawndroid.yml`. It asks only for what it cannot infer.
+Every flag is overridable for non-interactive setups:
 
-| Variable                | Meaning                          |
-| ----------------------- | -------------------------------- |
-| `SPAWNDROID_WD_URL`     | W3C WebDriver endpoint           |
-| `SPAWNDROID_UDID`       | device serial                    |
-| `SPAWNDROID_APP_PACKAGE`| installed app package            |
-| `SPAWNDROID_APP`        | app slug                         |
-| `SPAWNDROID_SESSION_ID` | session id                       |
+```bash
+npx spawndroid init --app app/build/outputs/apk/debug/app-debug.apk \
+  --command "mvn test" --report target/surefire-reports/TEST-com.example.CheckoutTest.xml
+```
+
+## The spec
+
+```yaml
+version: 1
+app: app/build/outputs/apk/debug/app-debug.apk   # APK path, or an uploaded app slug
+command: [mvn, test]                             # string is split; list is exact argv
+profile: android-14-phone                        # optional device profile
+report: target/surefire-reports/TEST-com.example.CheckoutTest.xml
+timeout: 600                                     # seconds to wait for the device
+fixtures:                                        # optional files pushed after readiness
+  - local: test/fixtures/sample.jpg
+    device: /sdcard/Pictures                     # absolute directory under /sdcard
+```
+
+Unknown keys are errors — a misspelled `timeout` must not silently fall back
+to the default.
+
+## Commands
+
+```bash
+spawndroid init     [--app <apk>] [--command <cmd>] [--report <xml>] [--profile <id>] [--force]
+spawndroid check    [--config <path>]
+spawndroid run      [--config <path>] [--profile <id>] [--timeout <s>] [-- <command…>]
+spawndroid upload   <app.apk> [--json]
+spawndroid start    --app <slug> [--profile <id>] [--json]
+spawndroid wait     <sessionId> [--timeout <s>] [--json]
+spawndroid report   <sessionId> --result passed|failed
+```
+
+## What `run` does
+
+1. Uploads the APK (or reuses the slug), creating a session with an
+   `Idempotency-Key`.
+2. Retries a *capacity* `429` up to 3 attempts over ~90 s; plan limits
+   (`PLAN_RUNNER_LIMIT`, `PLAN_DEVICE_MINUTES_EXHAUSTED`) fail immediately.
+3. Waits up to `timeout` for the device, then pushes fixtures.
+4. Runs `command` locally on the runner with the session in its environment.
+5. Posts the JUnit report, tears the device down, and prints the run URL.
+
+Exported to the command:
+
+| Variable                 | Meaning                   |
+| ------------------------ | ------------------------- |
+| `SPAWNDROID_WD_URL`      | W3C WebDriver endpoint    |
+| `SPAWNDROID_UDID`        | device serial             |
+| `SPAWNDROID_APP_PACKAGE` | installed app package     |
+| `SPAWNDROID_APP`         | app slug                  |
+| `SPAWNDROID_SESSION_ID`  | session id                |
 
 The build is installed before your command runs — never set `appium:app`.
+
+Exit codes: `0` tests passed, `1` tests failed, `2` infrastructure or setup
+failed. CI retry logic can key off that instead of re-running real failures.
 
 ## GitHub Actions
 
@@ -34,36 +84,25 @@ The build is installed before your command runs — never set `appium:app`.
 - uses: spawndroid/cli@v0.1.0
   with:
     api-key: ${{ secrets.SPAWNDROID_API_KEY }}
-    command: mvn test
-    app-path: app/build/outputs/apk/debug/app-debug.apk
-    report-path: target/surefire-reports/TEST-com.example.CheckoutTest.xml
 ```
 
-The Action also works on runners without Node. Outputs: `session-id`,
-`run-url`, `result`, `app-slug`.
+The Action installs the CLI, runs `spawndroid run --config spawndroid.yaml`,
+and exposes `session-id`, `run-url` and `result` as step outputs.
 
-## Commands
+## Limits
 
-```bash
-npx spawndroid run <app.apk> [--profile <id>] [--timeout <seconds>] -- <command…>
-npx spawndroid upload <app.apk> [--json]
-npx spawndroid start --app <slug> [--profile <id>] [--json]
-npx spawndroid wait <sessionId> [--timeout <seconds>] [--json]
-npx spawndroid report <sessionId> --result passed|failed
-```
+- Appium / WebDriver suites only: sessions expose a WebDriver endpoint, not adb.
+- One APK per session; the APK is installed before the command starts.
+- Per-run sessions. The stable hub is documented separately at
+  [docs.spawndroid.io](https://docs.spawndroid.io/docs/ci-tests).
+- Hobby: 15-minute sessions, 7-day build expiry, live logcat only.
 
 ## Examples
 
-| Example                                       | Language   | Runner              |
-| --------------------------------------------- | ---------- | ------------------- |
+| Example                                               | Language   | Runner              |
+| ----------------------------------------------------- | ---------- | ------------------- |
 | [webdriverio-android](./examples/webdriverio-android) | JavaScript | WebdriverIO + Mocha |
-| [python-pytest](./examples/python-pytest)     | Python     | pytest              |
-| [java-testng](./examples/java-testng)         | Java       | TestNG + Maven      |
-
-## Docs
-
-Capabilities generator, guides and the API reference live at
-[docs.spawndroid.io](https://docs.spawndroid.io). Plans and limits are at
-[spawndroid.io/pricing](https://spawndroid.io/pricing).
+| [python-pytest](./examples/python-pytest)             | Python     | pytest              |
+| [java-testng](./examples/java-testng)                 | Java       | TestNG + Maven      |
 
 MIT licensed.

@@ -1,57 +1,34 @@
-name: SpawnDroid Android tests
+name: Spawndroid Android tests
 description: >-
-  Upload an APK, boot a live Android device, run your test command against it,
-  and record the result along with the logcat and screen recording.
-author: SpawnDroid
+  Run your Android test suite on a hosted device. Reads spawndroid.yaml, boots
+  the device, runs the command, attaches the JUnit report and tears the device
+  down even when the job fails.
+author: Spawndroid
 
 branding:
   icon: smartphone
   color: green
 
-# Runs the four-call CI flow (upload → session → test → report) as one step.
-# It owns the session, so the pass/fail it records is the outcome of the step
-# itself — which is why it uses the per-run sessions API rather than the stable
-# hub. Use the hub (`/wd/hub`) when you drive WebDriver yourself and manage the
-# session lifecycle in your own framework.
-
 inputs:
   api-key:
-    description: SpawnDroid API key with the `upload` scope. Store it as a secret.
+    description: Spawndroid API key with the `upload` scope. Store it as a secret.
     required: true
-  command:
-    description: >-
-      The test command to run. It receives SPAWNDROID_WD_URL, SPAWNDROID_UDID,
-      SPAWNDROID_APP_PACKAGE, SPAWNDROID_APP and SPAWNDROID_SESSION_ID.
-    required: true
+  config:
+    description: Path to the spawndroid.yaml spec.
+    required: false
+    default: spawndroid.yaml
   api-url:
     description: Console origin.
     required: false
     default: https://app.spawndroid.io
-  app-path:
-    description: Path to the APK to upload. Omit when reusing an existing app via `app-slug`.
+  version:
+    description: CLI version to run.
     required: false
-  app-slug:
-    description: An already-uploaded app slug, to skip the upload step.
-    required: false
-  profile:
-    description: Device profile id, e.g. `android-14-phone`.
-    required: false
-  report-path:
-    description: >-
-      Path to a JUnit XML report to attach to the run (e.g. junit.xml). It is
-      parsed and its failures are shown on the run page.
-    required: false
-  ready-timeout:
-    description: >-
-      Seconds to wait for the device to become ready. The host's own boot and
-      install timeouts add up to ~420s, so the default leaves headroom for a
-      cold image.
-    required: false
-    default: "600"
+    default: "0.1.0"
 
 outputs:
   session-id:
-    description: The SpawnDroid session id for this run.
+    description: The Spawndroid session id for this run.
     value: ${{ steps.run.outputs.session-id }}
   run-url:
     description: Link to the run in the console.
@@ -59,22 +36,16 @@ outputs:
   result:
     description: '"passed" or "failed".'
     value: ${{ steps.run.outputs.result }}
-  app-slug:
-    description: The app slug the tests ran against.
-    value: ${{ steps.run.outputs.app-slug }}
 
 runs:
   using: composite
   steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
     - id: run
       shell: bash
-      run: bash "${{ github.action_path }}/run.sh"
+      run: npx --yes spawndroid@${{ inputs.version }} run --config "${{ inputs.config }}"
       env:
-        INPUT_API_KEY: ${{ inputs.api-key }}
-        INPUT_API_URL: ${{ inputs.api-url }}
-        INPUT_COMMAND: ${{ inputs.command }}
-        INPUT_APP_PATH: ${{ inputs.app-path }}
-        INPUT_APP_SLUG: ${{ inputs.app-slug }}
-        INPUT_PROFILE: ${{ inputs.profile }}
-        INPUT_REPORT_PATH: ${{ inputs.report-path }}
-        INPUT_READY_TIMEOUT: ${{ inputs.ready-timeout }}
+        SPAWNDROID_API_KEY: ${{ inputs.api-key }}
+        SPAWNDROID_URL: ${{ inputs.api-url }}
