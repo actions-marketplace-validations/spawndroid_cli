@@ -87,14 +87,23 @@ export function ciCoords(env) {
   return coords
 }
 
-function sessionEnv(view, appSlug, sessionId) {
-  return {
-    SPAWNDROID_WD_URL: view.webdriverUrl,
-    SPAWNDROID_UDID: view.device?.serial,
-    SPAWNDROID_APP_PACKAGE: view.app?.package,
-    SPAWNDROID_APP: appSlug,
-    SPAWNDROID_SESSION_ID: sessionId,
-  }
+function sessionEnv(view, appSlug, sessionId, createView) {
+  // The create response nests the package under `app`; the readiness read
+  // returns it at the top level — but for CI sessions the host never records
+  // it, so `package` there is null. Fall back to what the create call returned.
+  const pkg =
+    view.app?.package ?? view.package ?? createView?.app?.package ?? null
+  // spawn() would render a null value as the string "null", which is exactly
+  // how Appium ends up resolving a launchable activity for the package "null".
+  return Object.fromEntries(
+    Object.entries({
+      SPAWNDROID_WD_URL: view.webdriverUrl,
+      SPAWNDROID_UDID: view.device?.serial,
+      SPAWNDROID_APP_PACKAGE: pkg,
+      SPAWNDROID_APP: appSlug,
+      SPAWNDROID_SESSION_ID: sessionId,
+    }).filter(([, value]) => value != null)
+  )
 }
 
 export async function executeRun({
@@ -166,10 +175,12 @@ export async function executeRun({
 
     const { code, signal, spawnError } = await runCommand({
       view,
+      createView: started,
       appSlug: app.slug,
       sessionId,
       argv: spec.command,
       env,
+      cwd: specDir,
       spawnImpl,
       log,
       childRef,
@@ -324,11 +335,14 @@ async function pushFixtures({ api, sessionId, fixtures, specDir, log }) {
   }
 }
 
-function runCommand({ view, appSlug, sessionId, argv, env, spawnImpl, log, childRef }) {
+function runCommand({ view, createView, appSlug, sessionId, argv, env, cwd, spawnImpl, log, childRef }) {
   return new Promise((done) => {
     const child = spawnImpl(argv[0], argv.slice(1), {
       stdio: "inherit",
-      env: { ...env, ...sessionEnv(view, appSlug, sessionId) },
+      // The suite runs from the directory the spec lives in, so `./gradlew`
+      // and relative report paths resolve even when `--config` points elsewhere.
+      cwd,
+      env: { ...env, ...sessionEnv(view, appSlug, sessionId, createView) },
     })
     childRef.current = child
     child.on("error", (error) => {

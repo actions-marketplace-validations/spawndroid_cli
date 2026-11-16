@@ -17,7 +17,7 @@ The CLI exports `SPAWNDROID_WD_URL`, `SPAWNDROID_UDID` and
 
 ```yaml
 - run: npx spawndroid init --command "mvn test" --report target/surefire-reports/TEST-com.spawndroid.example.CheckoutTest.xml
-- uses: spawndroid/cli@v0.1.1
+- uses: spawndroid/cli@v0.1.2
   with:
     api-key: ${{ secrets.SPAWNDROID_API_KEY }}
 ```

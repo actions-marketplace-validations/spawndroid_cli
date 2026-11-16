@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -12,7 +12,7 @@ import { executeRun } from "../src/run.mjs"
  * A fake console: enough of the v1 shape that executeRun's real HTTP client
  * talks to it unmodified.
  */
-async function startConsole({ createFailures = 0, createCode = "free_pool_full" } = {}) {
+async function startConsole({ createFailures = 0, createCode = "free_pool_full", readyPackage = "com.example" } = {}) {
   const state = {
     creates: [],
     ends: [],
@@ -24,6 +24,7 @@ async function startConsole({ createFailures = 0, createCode = "free_pool_full" 
     readyAfter: 1,
     createFailures,
     createCode,
+    readyPackage,
   }
 
   const server = createServer(async (request, response) => {
@@ -67,7 +68,7 @@ async function startConsole({ createFailures = 0, createCode = "free_pool_full" 
           state: "ready",
           webdriverUrl: "http://127.0.0.1:9/wd/hub",
           device: { serial: "emulator-5554" },
-          app: { package: "com.example" },
+          package: state.readyPackage,
         })
       }
       return send(200, { sessionId: "sess_1", state: "booting" })
@@ -123,6 +124,56 @@ function baseSpec(overrides = {}) {
 
 const quiet = () => {}
 const fast = { pollMs: 5, retryDelayMs: 5 }
+
+test("the readiness view's package reaches the command's environment", async () => {
+  const consoleState = await startConsole()
+  const dir = mkdtempSync(join(tmpdir(), "spawndroid-env-"))
+  try {
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const outcome = await executeRun({
+      spec: baseSpec({
+        command: [
+          process.execPath,
+          "-e",
+          "require('node:fs').writeFileSync('env.txt', process.env.SPAWNDROID_APP_PACKAGE ?? '')",
+        ],
+      }),
+      specDir: dir,
+      api,
+      log: quiet,
+      ...fast,
+    })
+    assert.equal(outcome.exitCode, 0)
+    assert.equal(readFileSync(join(dir, "env.txt"), "utf8"), "com.example")
+  } finally {
+    await consoleState.close()
+  }
+})
+
+test("falls back to the create response when readiness omits the package", async () => {
+  const consoleState = await startConsole({ readyPackage: null })
+  const dir = mkdtempSync(join(tmpdir(), "spawndroid-env-"))
+  try {
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const outcome = await executeRun({
+      spec: baseSpec({
+        command: [
+          process.execPath,
+          "-e",
+          "require('node:fs').writeFileSync('env.txt', process.env.SPAWNDROID_APP_PACKAGE ?? '')",
+        ],
+      }),
+      specDir: dir,
+      api,
+      log: quiet,
+      ...fast,
+    })
+    assert.equal(outcome.exitCode, 0)
+    assert.equal(readFileSync(join(dir, "env.txt"), "utf8"), "com.example")
+  } finally {
+    await consoleState.close()
+  }
+})
 
 test("green command: passes the run, tears down and attaches JUnit", async () => {
   const consoleState = await startConsole()
