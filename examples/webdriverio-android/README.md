@@ -40,7 +40,7 @@ device, installs that build, and records the run. The build and the device are
   run: npx spawndroid init --command "pnpm --filter @spawndroid/example-webdriverio test" --report reports/junit.xml --profile android-14-phone
 
 - name: Run UI tests on a real device
-  uses: spawndroid/cli@v0.1.2
+  uses: spawndroid/cli@v0.1.3
   with:
     api-key: ${{ secrets.SPAWNDROID_API_KEY }}
 ```

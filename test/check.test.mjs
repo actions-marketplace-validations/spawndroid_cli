@@ -53,7 +53,7 @@ test("the plan's session cap is surfaced as a warning", async () => {
       baseUrl: "https://example.invalid",
     },
   })
-  assert.match(warnings.join("\n"), /stops a session after 15 minutes/)
+  assert.match(warnings.join("\n"), /caps manual sessions at 15 minutes/)
 })
 
 test("a rejected key is a problem", async () => {

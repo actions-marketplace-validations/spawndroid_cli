@@ -53,8 +53,9 @@ export async function collectChecks({ spec, specDir, api }) {
   }
 
   if (probe?.maxSessionMinutes) {
+    // The plan's cap applies to manual sessions; CI runs use the host ceiling.
     warnings.push(
-      `your plan (${probe.planLabel ?? probe.plan}) stops a session after ${probe.maxSessionMinutes} minutes of device time`
+      `your plan (${probe.planLabel ?? probe.plan}) caps manual sessions at ${probe.maxSessionMinutes} minutes; CI runs are not plan-capped`
     )
   }
   if (probe?.slots === 0) {

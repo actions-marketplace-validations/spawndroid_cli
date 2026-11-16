@@ -37,7 +37,17 @@ export function createApi({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
   async function request(path, init = {}) {
     const headers = { Accept: "application/json", ...(init.headers ?? {}) }
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`
-    const response = await fetchImpl(`${root}${path}`, { ...init, headers })
+    let response
+    try {
+      response = await fetchImpl(`${root}${path}`, { ...init, headers })
+    } catch (error) {
+      // status 0 marks a transport failure, which callers treat as transient.
+      throw new ApiError(
+        0,
+        { detail: `network error: ${error?.cause?.code ?? error?.message ?? "fetch failed"}` },
+        path
+      )
+    }
     if (response.status === 204) return null
     const body = await response.json().catch(() => null)
     if (!response.ok) throw new ApiError(response.status, body, path)
@@ -45,11 +55,20 @@ export function createApi({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
   }
 
   async function putFile(url, bytes, contentType) {
-    const response = await fetchImpl(url, {
-      method: "PUT",
-      headers: { "Content-Type": contentType ?? "application/octet-stream" },
-      body: bytes,
-    })
+    let response
+    try {
+      response = await fetchImpl(url, {
+        method: "PUT",
+        headers: { "Content-Type": contentType ?? "application/octet-stream" },
+        body: bytes,
+      })
+    } catch (error) {
+      throw new ApiError(
+        0,
+        { detail: `network error: ${error?.cause?.code ?? error?.message ?? "fetch failed"}` },
+        "presigned PUT"
+      )
+    }
     if (!response.ok) throw new ApiError(response.status, null, "presigned PUT")
   }
 

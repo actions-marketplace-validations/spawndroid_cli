@@ -21,7 +21,7 @@ Or use the GitHub Action:
 
 ```yaml
 - run: npx spawndroid init --command "pytest -q --junitxml=reports/junit.xml" --report reports/junit.xml
-- uses: spawndroid/cli@v0.1.2
+- uses: spawndroid/cli@v0.1.3
   with:
     api-key: ${{ secrets.SPAWNDROID_API_KEY }}
 ```

@@ -35,6 +35,17 @@ const PLAN_CODES = new Set([
   "device-minutes",
 ])
 
+/**
+ * A gateway or host hiccup, not a verdict. A device takes minutes to boot, so
+ * one 502/503/504 while the control plane catches up must not fail the run.
+ */
+const TRANSIENT_STATUSES = new Set([502, 503, 504])
+
+/** Transport failures (status 0) count as transient too. */
+function isTransient(error) {
+  return error?.status === 0 || TRANSIENT_STATUSES.has(error?.status)
+}
+
 export function remediationFor(code) {
   if (!code) return null
   if (code.startsWith("INSTALL_") || code.startsWith("AAB_")) {
@@ -263,18 +274,20 @@ async function createWithCapacityRetry({
     try {
       return await api.createSession(fields, idempotencyKey)
     } catch (error) {
-      const retryable =
+      const planLimit =
         error?.status === 429 &&
-        !PLAN_CODES.has(error.code) &&
-        !PLAN_CODES.has(error.legacyCode)
+        (PLAN_CODES.has(error.code) || PLAN_CODES.has(error.legacyCode))
+      const retryable =
+        !planLimit &&
+        (error?.status === 429 || isTransient(error))
       if (!retryable) throw toInfra(error)
       if (attempt >= maxAttempts) {
-        throw new InfraError(`no device capacity after ${maxAttempts} attempts: ${error.message}`, {
+        throw new InfraError(`${maxAttempts} attempts failed: ${error.message}`, {
           code: error.code ?? error.legacyCode ?? null,
         })
       }
       log(
-        `no capacity (${error.code ?? error.legacyCode ?? "429"}); attempt ${attempt}/${maxAttempts}, retrying in ${Math.round(
+        `start did not go through (${error.code ?? error.status}); attempt ${attempt}/${maxAttempts}, retrying in ${Math.round(
           retryDelayMs / 1000
         )}s`
       )
@@ -285,11 +298,25 @@ async function createWithCapacityRetry({
 
 async function waitForReady({ api, sessionId, timeoutSeconds, pollMs, sleep, log }) {
   const deadline = Date.now() + timeoutSeconds * 1000
+  let warned = false
   for (;;) {
+    if (Date.now() > deadline) {
+      throw new InfraError(`timed out after ${timeoutSeconds}s waiting for the device`, {
+        hint: "run `spawndroid check`; if the host is slow, raise the spec's timeout",
+      })
+    }
     let view
     try {
       view = await api.getSession(sessionId)
     } catch (error) {
+      if (isTransient(error)) {
+        if (!warned) {
+          log(`the host is not answering yet (${error.status || "network"}); still waiting`)
+          warned = true
+        }
+        await sleep(pollMs)
+        continue
+      }
       throw toInfra(error)
     }
     if (view?.state === "ready") return view
@@ -300,11 +327,6 @@ async function waitForReady({ api, sessionId, timeoutSeconds, pollMs, sleep, log
       })
     }
     if (view?.endedAt) throw new InfraError("session ended before it became ready")
-    if (Date.now() > deadline) {
-      throw new InfraError(`timed out after ${timeoutSeconds}s waiting for the device`, {
-        hint: "run `spawndroid check`; if the host is slow, raise the spec's timeout",
-      })
-    }
     await sleep(pollMs)
   }
 }
