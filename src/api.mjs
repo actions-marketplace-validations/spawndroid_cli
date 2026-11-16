@@ -12,8 +12,15 @@ import { randomUUID } from "node:crypto"
 
 export class ApiError extends Error {
   constructor(status, body, path) {
+    const raw = body && (body.detail || body.error || body.title)
+    // `detail` is usually a string but can be an object from a proxy or a
+    // validation layer; never let an error message read "[object Object]".
     const detail =
-      (body && (body.detail || body.error || body.title)) || `HTTP ${status}`
+      typeof raw === "string"
+        ? raw
+        : raw
+          ? JSON.stringify(raw)
+          : `HTTP ${status}`
     super(`${status} ${detail}`)
     this.name = "ApiError"
     this.status = status
@@ -35,6 +42,15 @@ export function createApi({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
     const body = await response.json().catch(() => null)
     if (!response.ok) throw new ApiError(response.status, body, path)
     return body
+  }
+
+  async function putFile(url, bytes, contentType) {
+    const response = await fetchImpl(url, {
+      method: "PUT",
+      headers: { "Content-Type": contentType ?? "application/octet-stream" },
+      body: bytes,
+    })
+    if (!response.ok) throw new ApiError(response.status, null, "presigned PUT")
   }
 
   return {
@@ -81,9 +97,36 @@ export function createApi({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
 
     async uploadApk(file) {
       const bytes = await readFile(file)
-      const form = new FormData()
-      form.append("file", new Blob([bytes]), basename(file))
-      const body = await request("/api/apps", { method: "POST", body: form })
+      const filename = basename(file)
+      // The bytes go straight to object storage: the console sits behind a
+      // serverless function whose request body is capped well below a real
+      // APK, so multipart only survives as a local-dev fallback.
+      let presigned
+      try {
+        presigned = await request("/api/apps/presign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename, size: bytes.length }),
+        })
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 503) {
+          const form = new FormData()
+          form.append("file", new Blob([bytes]), filename)
+          const body = await request("/api/apps", { method: "POST", body: form })
+          return body?.app
+        }
+        throw error
+      }
+      await putFile(
+        presigned.url,
+        bytes,
+        presigned.contentType ?? "application/octet-stream"
+      )
+      const body = await request("/api/apps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: presigned.key, filename }),
+      })
       return body?.app
     },
 
@@ -121,14 +164,7 @@ export function createApi({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
       )
     },
 
-    async putFile(url, bytes, contentType) {
-      const response = await fetchImpl(url, {
-        method: "PUT",
-        headers: { "Content-Type": contentType ?? "application/octet-stream" },
-        body: bytes,
-      })
-      if (!response.ok) throw new ApiError(response.status, null, "presigned PUT")
-    },
+    putFile,
 
     async commitFile(id, fields) {
       return request(`/api/v1/sessions/${encodeURIComponent(id)}/files`, {
