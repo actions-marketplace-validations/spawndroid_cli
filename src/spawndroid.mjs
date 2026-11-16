@@ -22,7 +22,7 @@ import {
   loadSpec,
 } from "./config.mjs"
 import { runInit } from "./init.mjs"
-import { EXIT_INFRA, EXIT_PASSED, executeRun } from "./run.mjs"
+import { EXIT_INFRA, EXIT_PASSED, executeRun, sessionEnv } from "./run.mjs"
 
 const API_KEY = process.env.SPAWNDROID_API_KEY?.trim()
 const API_URL = (
@@ -76,15 +76,6 @@ function api() {
 
 function specPathOf(values) {
   return resolve(values.config ?? process.env.SPAWNDROID_CONFIG ?? SPEC_FILE)
-}
-
-function sessionEnv(view) {
-  return {
-    SPAWNDROID_WD_URL: view.webdriverUrl,
-    SPAWNDROID_UDID: view.device?.serial,
-    SPAWNDROID_APP_PACKAGE: view.app?.package,
-    SPAWNDROID_SESSION_ID: view.sessionId,
-  }
 }
 
 async function writeGitHubOutputs({ sessionId, result, runUrl }) {
@@ -269,7 +260,10 @@ async function main() {
         if (values.json) {
           console.log(JSON.stringify(view, null, 2))
         } else {
-          for (const [key, value] of Object.entries(sessionEnv({ ...view, sessionId }))) {
+          // sessionEnv drops null/undefined values, so a readiness read that
+          // omits the package cannot print "SPAWNDROID_APP_PACKAGE=undefined".
+          const env = sessionEnv(view, view?.appSlug, sessionId)
+          for (const [key, value] of Object.entries(env)) {
             console.log(`${key}=${value}`)
           }
         }

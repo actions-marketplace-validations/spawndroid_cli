@@ -98,7 +98,7 @@ export function ciCoords(env) {
   return coords
 }
 
-function sessionEnv(view, appSlug, sessionId, createView) {
+export function sessionEnv(view, appSlug, sessionId, createView) {
   // The create response nests the package under `app`; the readiness read
   // returns it at the top level — but for CI sessions the host never records
   // it, so `package` there is null. Fall back to what the create call returned.
@@ -205,10 +205,13 @@ export async function executeRun({
     }
 
     const result = code === 0 ? "passed" : "failed"
-    await teardown(result)
+    // Attach before teardown: the report route accepts a POST after the run
+    // ends, but a report that lands while the session is still open cannot
+    // race a teardown, and a failure here is a warning, never a lost verdict.
     if (spec.report) {
       await attachReport({ api, sessionId, reportPath: spec.report, specDir, log })
     }
+    await teardown(result)
     return {
       exitCode: code === 0 ? EXIT_PASSED : EXIT_TESTS_FAILED,
       sessionId,

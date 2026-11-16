@@ -28,6 +28,7 @@ async function startConsole({
     commits: [],
     gets: 0,
     readyAfter: 1,
+    events: [],
     createFailures,
     createCode,
     createStatus,
@@ -53,6 +54,7 @@ async function startConsole({
     }
 
     if (request.method === "POST" && url.pathname === "/api/v1/sessions") {
+      state.events.push("create")
       state.creates.push({
         body: json(),
         key: request.headers["idempotency-key"],
@@ -85,6 +87,7 @@ async function startConsole({
       return send(200, { sessionId: "sess_1", state: "booting" })
     }
     if (request.method === "DELETE" && url.pathname === "/api/v1/sessions/sess_1") {
+      state.events.push("end")
       state.ends.push(json())
       return send(200, { ok: true })
     }
@@ -108,6 +111,7 @@ async function startConsole({
       return send(200, { ok: true })
     }
     if (request.method === "POST" && url.pathname === "/api/v1/sessions/sess_1/report") {
+      state.events.push("report")
       state.reports.push(raw.toString("utf8"))
       return send(201, { ok: true, report: {} })
     }
@@ -203,6 +207,8 @@ test("green command: passes the run, tears down and attaches JUnit", async () =>
     assert.equal(outcome.result, "passed")
     assert.deepEqual(consoleState.ends, [{ result: "passed" }])
     assert.equal(consoleState.reports.length, 1)
+    // The report lands while the session is open, then the device is released.
+    assert.deepEqual(consoleState.events, ["create", "report", "end"])
     assert.deepEqual(consoleState.creates[0].body, { artifactId: "checkout" })
     assert.match(consoleState.creates[0].key, /^spawndroid-/)
   } finally {
