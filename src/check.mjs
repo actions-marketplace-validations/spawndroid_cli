@@ -101,7 +101,8 @@ export async function collectChecks({ spec, specDir, api }) {
 
 export function planNotes() {
   return [
-    "limits: sessions stop at your plan's cap (Hobby: 15 minutes of device time);",
+    "limits: manual sessions stop at your plan's cap (Hobby: 15 minutes);",
+    "        CI runs are not plan-capped and count their real minutes.",
     "        Hobby builds expire 7 days after upload; Hobby logcat is live-only.",
     "        Logcat, video and JUnit history are kept for your plan's retention window.",
   ]
