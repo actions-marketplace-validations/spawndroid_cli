@@ -5,6 +5,21 @@ Run Android tests on hosted devices from any CI.
 Upload a build, boot a real device, run your test command against it, and keep
 the result along with the JUnit report, logcat and screen recording.
 
+## Install
+
+Node 20 or newer. Nothing to install for a one-off run:
+
+```bash
+npx spawndroid run
+```
+
+Or install it — globally, or as a dev dependency pinned with the project:
+
+```bash
+npm install --global spawndroid
+npm install --save-dev spawndroid
+```
+
 ## Quick start
 
 ```bash
