@@ -64,11 +64,15 @@ export function createApi({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
           await request(`/api/v1/sessions/probe-${randomUUID()}`)
           return { ok: true, scope: null, plan: null, planLabel: null, slots: null, maxSessionMinutes: null }
         } catch (fallbackError) {
-          if (
-            fallbackError instanceof ApiError &&
-            (fallbackError.status === 401 || fallbackError.status === 403)
-          ) {
-            return { ok: false, error: fallbackError }
+          if (fallbackError instanceof ApiError) {
+            // A 404 on an unknown session means the key authenticates but the
+            // session does not exist — exactly the probe's success case.
+            if (fallbackError.status === 404) {
+              return { ok: true, scope: null, plan: null, planLabel: null, slots: null, maxSessionMinutes: null }
+            }
+            if (fallbackError.status === 401 || fallbackError.status === 403) {
+              return { ok: false, error: fallbackError }
+            }
           }
           throw fallbackError
         }
