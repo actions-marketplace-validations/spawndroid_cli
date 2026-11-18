@@ -1,26 +1,76 @@
 name: release
 
+# Publishes whenever main carries a version that npm does not have yet, so a
+# release is: bump `version` in package.json (and the default in action.yml),
+# merge to main. The matching `v<version>` tag is created after a successful
+# publish, which is what `uses: spawndroid/cli@v<version>` resolves.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+  workflow_dispatch:
+
+# Two quick pushes must not race each other to publish the same version.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write
+      contents: write # push the release tag
+      id-token: write # npm provenance
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      # Without this the tests cannot load runtime dependencies (`yaml`), so
-      # every tag since 0.1.5 failed before publishing.
-      - run: npm ci
-      - run: npm test
-      - run: npm publish --provenance --access public
+
+      - name: Read the version and whether npm already has it
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if npm view "spawndroid@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "spawndroid@$version is already on npm; nothing to do."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "spawndroid@$version is new; publishing."
+          fi
+
+      - name: The action defaults to this version
+        if: steps.version.outputs.published == 'false'
+        run: |
+          default=$(sed -n '/^  version:/,/default:/s/.*default: "\(.*\)"/\1/p' action.yml)
+          if [ "$default" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error file=action.yml::action.yml defaults to $default, package.json is ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
+      # Without this the tests cannot load runtime dependencies (`yaml`).
+      - if: steps.version.outputs.published == 'false'
+        run: npm ci
+
+      - if: steps.version.outputs.published == 'false'
+        run: npm test
+
+      - if: steps.version.outputs.published == 'false'
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Tag the release
+        if: steps.version.outputs.published == 'false'
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists; leaving it."
+          else
+            git tag "$tag"
+            git push origin "$tag"
+          fi
