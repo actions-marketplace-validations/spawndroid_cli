@@ -190,6 +190,13 @@ test("falls back to the create response when readiness omits the package", async
   }
 })
 
+/** The real environment (PATH and friends) minus GitHub's run coordinates. */
+function withoutGithubEnv() {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("GITHUB_"))
+  )
+}
+
 test("green command: passes the run, tears down and attaches JUnit", async () => {
   const consoleState = await startConsole()
   const dir = mkdtempSync(join(tmpdir(), "spawndroid-run-"))
@@ -201,6 +208,9 @@ test("green command: passes the run, tears down and attaches JUnit", async () =>
       specDir: dir,
       api,
       log: quiet,
+      // On a GitHub runner the start body would also carry the runner's own
+      // commit, branch and repo; this test asserts the body without them.
+      env: withoutGithubEnv(),
       ...fast,
     })
     assert.equal(outcome.exitCode, 0)
