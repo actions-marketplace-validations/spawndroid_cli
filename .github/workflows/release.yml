@@ -17,6 +17,9 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      # Without this the tests cannot load runtime dependencies (`yaml`), so
+      # every tag since 0.1.5 failed before publishing.
+      - run: npm ci
       - run: npm test
       - run: npm publish --provenance --access public
         env:
