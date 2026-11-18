@@ -148,7 +148,7 @@ export function parseSpec(text, { file = SPEC_FILE } = {}) {
       ? null
       : typeof doc.report === "string" && doc.report.trim()
         ? doc.report.trim()
-        : (problems.push(`"report" must be a path to a JUnit XML file`), null)
+        : (problems.push(`"report" must be a JUnit XML file, a folder of them, or a pattern`), null)
 
   let timeout = DEFAULT_TIMEOUT_SECONDS
   if (doc.timeout != null) {
@@ -291,10 +291,7 @@ function detectReport(dir, stack, command) {
     )
     if (reports.length === 1) return { report: join("target", "surefire-reports", reports[0]), note: null }
     if (reports.length > 1) {
-      return {
-        report: null,
-        note: `${reports.length} JUnit files in target/surefire-reports — set "report" to one of them`,
-      }
+      return { report: null, note: "JUnit files in target/surefire-reports are attached automatically" }
     }
   }
   if (stack === "node" && file(join(dir, "reports", "junit.xml"))) {
@@ -309,7 +306,7 @@ function detectReport(dir, stack, command) {
   if (stack === "gradle") {
     return {
       report: null,
-      note: "Gradle writes build/test-results/test — pick one TEST-*.xml and set \"report\"",
+      note: "Gradle's reports in build/test-results are attached automatically",
     }
   }
   void command
