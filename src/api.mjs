@@ -31,11 +31,23 @@ export class ApiError extends Error {
   }
 }
 
-export function createApi({ baseUrl, apiKey, fetchImpl = globalThis.fetch }) {
+export function createApi({
+  baseUrl,
+  apiKey,
+  // `spawndroid-cli/<version>`. The console records it per run so it can tell
+  // which clients attach test reports; Node's default agent is just "node".
+  userAgent = "spawndroid-cli",
+  fetchImpl = globalThis.fetch,
+}) {
   const root = baseUrl.replace(/\/$/, "")
+  const agent = `${userAgent} node/${process.versions.node}`
 
   async function request(path, init = {}) {
-    const headers = { Accept: "application/json", ...(init.headers ?? {}) }
+    const headers = {
+      Accept: "application/json",
+      "User-Agent": agent,
+      ...(init.headers ?? {}),
+    }
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`
     let response
     try {

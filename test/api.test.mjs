@@ -122,3 +122,24 @@ test("a rejected key fails both probes", async () => {
     await consoleState.close()
   }
 })
+
+test("every console request names the CLI and its version", async () => {
+  const seen = []
+  const api = createApi({
+    baseUrl: "https://console.test",
+    apiKey: "sd_test",
+    userAgent: "spawndroid-cli/9.9.9",
+    fetchImpl: async (url, init) => {
+      seen.push(init.headers["User-Agent"])
+      return new Response(JSON.stringify({ scope: "upload" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    },
+  })
+  await api.probe().catch(() => undefined)
+  assert.ok(seen.length > 0)
+  for (const agent of seen) {
+    assert.match(agent, /^spawndroid-cli\/9\.9\.9 node\/\d+/)
+  }
+})

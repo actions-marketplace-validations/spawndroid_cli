@@ -71,7 +71,11 @@ function api() {
       "SPAWNDROID_API_KEY is not set — create a key in API & CI/CD → API keys (upload scope)",
     ])
   }
-  return createApi({ baseUrl: API_URL, apiKey: API_KEY })
+  return createApi({
+    baseUrl: API_URL,
+    apiKey: API_KEY,
+    userAgent: `spawndroid-cli/${VERSION}`,
+  })
 }
 
 function specPathOf(values) {
