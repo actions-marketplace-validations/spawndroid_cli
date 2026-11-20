@@ -126,7 +126,8 @@ export function createApi({
       }
     },
 
-    async uploadApk(file) {
+    /** `github` (optional): the pull request the build comes from. */
+    async uploadApk(file, github = null) {
       const bytes = await readFile(file)
       const filename = basename(file)
       // The bytes go straight to object storage: the console sits behind a
@@ -156,7 +157,11 @@ export function createApi({
       const body = await request("/api/apps", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: presigned.key, filename }),
+        body: JSON.stringify({
+          key: presigned.key,
+          filename,
+          ...(github ? { github } : {}),
+        }),
       })
       return body?.app
     },

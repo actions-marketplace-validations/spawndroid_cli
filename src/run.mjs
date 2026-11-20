@@ -91,14 +91,33 @@ function toInfra(error) {
  * GitHub's temporary merge commit, which matches no commit on the branch, so
  * checks and comparisons would attach to nothing.
  */
-function pullRequestHead(env) {
+function pullRequestEvent(env) {
   if (!env.GITHUB_EVENT_PATH) return null;
   try {
     const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8"));
-    return event.pull_request?.head?.sha ?? null;
+    return event.pull_request ?? null;
   } catch {
     return null;
   }
+}
+
+function pullRequestHead(env) {
+  return pullRequestEvent(env)?.head?.sha ?? null;
+}
+
+/**
+ * The pull request an uploaded build comes from. The console keeps such a
+ * build as that PR's own build (for its runs and preview link) instead of a
+ * new release of the app.
+ */
+export function pullRequestUpload(env) {
+  const pull = pullRequestEvent(env);
+  if (!pull?.number || !pull.head?.sha || !env.GITHUB_REPOSITORY) return null;
+  return {
+    repository: env.GITHUB_REPOSITORY,
+    pullNumber: pull.number,
+    headSha: pull.head.sha,
+  };
 }
 
 /** Commit, branch and repo link, when the runner is GitHub Actions. */
@@ -168,7 +187,7 @@ export async function executeRun({
   process.on("SIGTERM", forward);
 
   try {
-    const app = await resolveApp({ spec, specDir, api, log });
+    const app = await resolveApp({ spec, specDir, api, log, env });
     const idempotencyKey = `spawndroid-${randomUUID()}`;
     const fields = {
       artifactId: app.artifactId,
@@ -275,7 +294,7 @@ export async function executeRun({
   }
 }
 
-async function resolveApp({ spec, specDir, api, log }) {
+async function resolveApp({ spec, specDir, api, log, env }) {
   const candidate = resolve(specDir, spec.app);
   let isFile = false;
   try {
@@ -285,7 +304,7 @@ async function resolveApp({ spec, specDir, api, log }) {
   }
   const looksLikePath = /\.apk$/i.test(spec.app) || spec.app.includes("/");
   if (isFile) {
-    const uploaded = await api.uploadApk(candidate);
+    const uploaded = await api.uploadApk(candidate, pullRequestUpload(env));
     if (!uploaded?.slug) {
       throw new InfraError("the upload response did not include an app slug");
     }

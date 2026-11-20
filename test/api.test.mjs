@@ -69,6 +69,14 @@ test("uploadApk goes through presign, PUT and register", async () => {
     assert.deepEqual(seen.presign, { filename: "app-debug.apk", size: 2048 })
     assert.equal(seen.put, 2048)
     assert.deepEqual(seen.register, { key: "tenant/app.apk", filename: "app-debug.apk" })
+
+    const github = { repository: "acme/shop", pullNumber: 42, headSha: "b".repeat(40) }
+    await api.uploadApk(join(dir, "app-debug.apk"), github)
+    assert.deepEqual(seen.register, {
+      key: "tenant/app.apk",
+      filename: "app-debug.apk",
+      github,
+    })
   } finally {
     await new Promise((done) => server.close(done))
   }
