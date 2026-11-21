@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # push the release tag
-      id-token: write # npm provenance
+      id-token: write # npm trusted publishing (OIDC) and provenance
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,10 +59,15 @@ jobs:
       - if: steps.version.outputs.published == 'false'
         run: npm test
 
+      # Trusted publishing: npm trusts this workflow (spawndroid/cli,
+      # release.yml) through GitHub's OIDC token, so no npm token or one-time
+      # password is involved, and provenance is attached automatically. It
+      # needs npm 11.5.1 or later; Node 22 ships npm 10.
       - if: steps.version.outputs.published == 'false'
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm install -g npm@^11.5.1
+
+      - if: steps.version.outputs.published == 'false'
+        run: npm publish --access public
 
       - name: Tag the release
         if: steps.version.outputs.published == 'false'
