@@ -1,8 +1,6 @@
 name: Spawndroid Android tests
 description: >-
-  Run your Android test suite on a hosted device. Reads spawndroid.yaml, boots
-  the device, runs the command, attaches the JUnit report and tears the device
-  down even when the job fails.
+  Run Android tests on hosted devices using spawndroid.yaml, with automatic setup, JUnit reports, and cleanup on failure.
 author: Spawndroid
 
 branding:
