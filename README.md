@@ -104,7 +104,7 @@ failed. CI retry logic can key off that instead of re-running real failures.
 ## GitHub Actions
 
 ```yaml
-- uses: spawndroid/cli@v0.1.3
+- uses: spawndroid/cli@v0.1.7
   with:
     api-key: ${{ secrets.SPAWNDROID_API_KEY }}
 ```
