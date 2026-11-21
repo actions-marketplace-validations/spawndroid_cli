@@ -1,12 +1,12 @@
-import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
-import { createServer } from "node:http"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
-import { test } from "node:test"
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
 
-import { createApi } from "../src/api.mjs"
-import { executeRun } from "../src/run.mjs"
+import { createApi } from "../src/api.mjs";
+import { ciCoords, executeRun, pullRequestUpload } from "../src/run.mjs";
 
 /**
  * A fake console: enough of the v1 shape that executeRun's real HTTP client
@@ -34,33 +34,36 @@ async function startConsole({
     createStatus,
     readyFailures,
     readyPackage,
-  }
+  };
 
   const server = createServer(async (request, response) => {
-    const url = new URL(request.url, "http://localhost")
-    const chunks = []
-    for await (const chunk of request) chunks.push(chunk)
-    const raw = Buffer.concat(chunks)
+    const url = new URL(request.url, "http://localhost");
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const raw = Buffer.concat(chunks);
     const json = () => {
       try {
-        return JSON.parse(raw.toString("utf8"))
+        return JSON.parse(raw.toString("utf8"));
       } catch {
-        return null
+        return null;
       }
-    }
+    };
     const send = (status, body) => {
-      response.writeHead(status, { "Content-Type": "application/json" })
-      response.end(JSON.stringify(body))
-    }
+      response.writeHead(status, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(body));
+    };
 
     if (request.method === "POST" && url.pathname === "/api/v1/sessions") {
-      state.events.push("create")
+      state.events.push("create");
       state.creates.push({
         body: json(),
         key: request.headers["idempotency-key"],
-      })
+      });
       if (state.creates.length <= state.createFailures) {
-        return send(state.createStatus, { code: state.createCode, detail: "not now" })
+        return send(state.createStatus, {
+          code: state.createCode,
+          detail: "not now",
+        });
       }
       return send(201, {
         sessionId: "sess_1",
@@ -68,12 +71,18 @@ async function startConsole({
         webdriverUrl: "http://127.0.0.1:9/wd/hub",
         device: { serial: "emulator-5554" },
         app: { package: "com.example" },
-      })
+      });
     }
-    if (request.method === "GET" && url.pathname === "/api/v1/sessions/sess_1") {
-      state.gets += 1
+    if (
+      request.method === "GET" &&
+      url.pathname === "/api/v1/sessions/sess_1"
+    ) {
+      state.gets += 1;
       if (state.gets <= state.readyFailures) {
-        return send(504, { code: "UPSTREAM_TIMEOUT", detail: "The device host timed out." })
+        return send(504, {
+          code: "UPSTREAM_TIMEOUT",
+          detail: "The device host timed out.",
+        });
       }
       if (state.gets >= state.readyAfter) {
         return send(200, {
@@ -82,46 +91,55 @@ async function startConsole({
           webdriverUrl: "http://127.0.0.1:9/wd/hub",
           device: { serial: "emulator-5554" },
           package: state.readyPackage,
-        })
+        });
       }
-      return send(200, { sessionId: "sess_1", state: "booting" })
+      return send(200, { sessionId: "sess_1", state: "booting" });
     }
-    if (request.method === "DELETE" && url.pathname === "/api/v1/sessions/sess_1") {
-      state.events.push("end")
-      state.ends.push(json())
-      return send(200, { ok: true })
+    if (
+      request.method === "DELETE" &&
+      url.pathname === "/api/v1/sessions/sess_1"
+    ) {
+      state.events.push("end");
+      state.ends.push(json());
+      return send(200, { ok: true });
     }
     if (
       request.method === "POST" &&
       url.pathname === "/api/v1/sessions/sess_1/files/presign"
     ) {
-      state.presigns.push(json())
+      state.presigns.push(json());
       return send(200, {
         key: "tenant/session/fixture.bin",
         url: `${state.root}/upload/fixture.bin`,
         contentType: "application/octet-stream",
-      })
+      });
     }
     if (request.method === "PUT" && url.pathname === "/upload/fixture.bin") {
-      state.puts.push(raw.length)
-      return send(200, {})
+      state.puts.push(raw.length);
+      return send(200, {});
     }
-    if (request.method === "POST" && url.pathname === "/api/v1/sessions/sess_1/files") {
-      state.commits.push(json())
-      return send(200, { ok: true })
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/v1/sessions/sess_1/files"
+    ) {
+      state.commits.push(json());
+      return send(200, { ok: true });
     }
-    if (request.method === "POST" && url.pathname === "/api/v1/sessions/sess_1/report") {
-      state.events.push("report")
-      state.reports.push(raw.toString("utf8"))
-      return send(201, { ok: true, report: {} })
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/v1/sessions/sess_1/report"
+    ) {
+      state.events.push("report");
+      state.reports.push(raw.toString("utf8"));
+      return send(201, { ok: true, report: {} });
     }
-    return send(404, { code: "NOT_FOUND" })
-  })
+    return send(404, { code: "NOT_FOUND" });
+  });
 
-  await new Promise((done) => server.listen(0, "127.0.0.1", done))
-  state.root = `http://127.0.0.1:${server.address().port}`
-  state.close = () => new Promise((done) => server.close(done))
-  return state
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  state.root = `http://127.0.0.1:${server.address().port}`;
+  state.close = () => new Promise((done) => server.close(done));
+  return state;
 }
 
 function baseSpec(overrides = {}) {
@@ -134,17 +152,17 @@ function baseSpec(overrides = {}) {
     report: null,
     timeout: 5,
     ...overrides,
-  }
+  };
 }
 
-const quiet = () => {}
-const fast = { pollMs: 5, retryDelayMs: 5 }
+const quiet = () => {};
+const fast = { pollMs: 5, retryDelayMs: 5 };
 
 test("the readiness view's package reaches the command's environment", async () => {
-  const consoleState = await startConsole()
-  const dir = mkdtempSync(join(tmpdir(), "spawndroid-env-"))
+  const consoleState = await startConsole();
+  const dir = mkdtempSync(join(tmpdir(), "spawndroid-env-"));
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec({
         command: [
@@ -157,19 +175,19 @@ test("the readiness view's package reaches the command's environment", async () 
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 0)
-    assert.equal(readFileSync(join(dir, "env.txt"), "utf8"), "com.example")
+    });
+    assert.equal(outcome.exitCode, 0);
+    assert.equal(readFileSync(join(dir, "env.txt"), "utf8"), "com.example");
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 test("falls back to the create response when readiness omits the package", async () => {
-  const consoleState = await startConsole({ readyPackage: null })
-  const dir = mkdtempSync(join(tmpdir(), "spawndroid-env-"))
+  const consoleState = await startConsole({ readyPackage: null });
+  const dir = mkdtempSync(join(tmpdir(), "spawndroid-env-"));
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec({
         command: [
@@ -182,27 +200,27 @@ test("falls back to the create response when readiness omits the package", async
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 0)
-    assert.equal(readFileSync(join(dir, "env.txt"), "utf8"), "com.example")
+    });
+    assert.equal(outcome.exitCode, 0);
+    assert.equal(readFileSync(join(dir, "env.txt"), "utf8"), "com.example");
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 /** The real environment (PATH and friends) minus GitHub's run coordinates. */
 function withoutGithubEnv() {
   return Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith("GITHUB_"))
-  )
+    Object.entries(process.env).filter(([key]) => !key.startsWith("GITHUB_")),
+  );
 }
 
 test("green command: passes the run, tears down and attaches JUnit", async () => {
-  const consoleState = await startConsole()
-  const dir = mkdtempSync(join(tmpdir(), "spawndroid-run-"))
-  writeFileSync(join(dir, "junit.xml"), "<testsuite/>")
+  const consoleState = await startConsole();
+  const dir = mkdtempSync(join(tmpdir(), "spawndroid-run-"));
+  writeFileSync(join(dir, "junit.xml"), "<testsuite/>");
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec({ report: "junit.xml" }),
       specDir: dir,
@@ -212,19 +230,19 @@ test("green command: passes the run, tears down and attaches JUnit", async () =>
       // commit, branch and repo; this test asserts the body without them.
       env: withoutGithubEnv(),
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 0)
-    assert.equal(outcome.result, "passed")
-    assert.deepEqual(consoleState.ends, [{ result: "passed" }])
-    assert.equal(consoleState.reports.length, 1)
+    });
+    assert.equal(outcome.exitCode, 0);
+    assert.equal(outcome.result, "passed");
+    assert.deepEqual(consoleState.ends, [{ result: "passed" }]);
+    assert.equal(consoleState.reports.length, 1);
     // The report lands while the session is open, then the device is released.
-    assert.deepEqual(consoleState.events, ["create", "report", "end"])
-    assert.deepEqual(consoleState.creates[0].body, { artifactId: "checkout" })
-    assert.match(consoleState.creates[0].key, /^spawndroid-/)
+    assert.deepEqual(consoleState.events, ["create", "report", "end"]);
+    assert.deepEqual(consoleState.creates[0].body, { artifactId: "checkout" });
+    assert.match(consoleState.creates[0].key, /^spawndroid-/);
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 test("without a report setting, the Gradle reports the command wrote are attached", async () => {
   const consoleState = await startConsole()
@@ -260,107 +278,110 @@ test("without a report setting, the Gradle reports the command wrote are attache
 })
 
 test("failing command: exit 1 and a failed verdict", async () => {
-  const consoleState = await startConsole()
+  const consoleState = await startConsole();
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec({ command: [process.execPath, "-e", "process.exit(3)"] }),
       specDir: process.cwd(),
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 1)
-    assert.deepEqual(consoleState.ends, [{ result: "failed" }])
+    });
+    assert.equal(outcome.exitCode, 1);
+    assert.deepEqual(consoleState.ends, [{ result: "failed" }]);
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 test("a transient start failure is retried with the same key", async () => {
   const consoleState = await startConsole({
     createFailures: 1,
     createStatus: 504,
     createCode: "UPSTREAM_TIMEOUT",
-  })
+  });
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec(),
       specDir: process.cwd(),
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 0)
-    assert.equal(consoleState.creates.length, 2)
-    assert.equal(consoleState.creates[0].key, consoleState.creates[1].key)
+    });
+    assert.equal(outcome.exitCode, 0);
+    assert.equal(consoleState.creates.length, 2);
+    assert.equal(consoleState.creates[0].key, consoleState.creates[1].key);
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 test("a transient readiness failure is retried until the deadline", async () => {
-  const consoleState = await startConsole({ readyFailures: 2 })
+  const consoleState = await startConsole({ readyFailures: 2 });
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec(),
       specDir: process.cwd(),
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 0)
-    assert.equal(outcome.result, "passed")
+    });
+    assert.equal(outcome.exitCode, 0);
+    assert.equal(outcome.result, "passed");
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 test("plan limits are not retried", async () => {
-  const consoleState = await startConsole({ createFailures: 1, createCode: "PLAN_RUNNER_LIMIT" })
+  const consoleState = await startConsole({
+    createFailures: 1,
+    createCode: "PLAN_RUNNER_LIMIT",
+  });
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec(),
       specDir: process.cwd(),
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 2)
-    assert.equal(consoleState.creates.length, 1)
+    });
+    assert.equal(outcome.exitCode, 2);
+    assert.equal(consoleState.creates.length, 1);
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 test("capacity 429 is retried with the same idempotency key", async () => {
-  const consoleState = await startConsole({ createFailures: 1 })
+  const consoleState = await startConsole({ createFailures: 1 });
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec(),
       specDir: process.cwd(),
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 0)
-    assert.equal(consoleState.creates.length, 2)
-    assert.equal(consoleState.creates[0].key, consoleState.creates[1].key)
+    });
+    assert.equal(outcome.exitCode, 0);
+    assert.equal(consoleState.creates.length, 2);
+    assert.equal(consoleState.creates[0].key, consoleState.creates[1].key);
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 test("fixtures are presigned, uploaded and committed", async () => {
-  const consoleState = await startConsole()
-  const dir = mkdtempSync(join(tmpdir(), "spawndroid-fixtures-"))
-  writeFileSync(join(dir, "fixture.bin"), Buffer.from("hello"))
+  const consoleState = await startConsole();
+  const dir = mkdtempSync(join(tmpdir(), "spawndroid-fixtures-"));
+  writeFileSync(join(dir, "fixture.bin"), Buffer.from("hello"));
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec({
         fixtures: [{ local: "fixture.bin", device: "/sdcard/Download" }],
@@ -369,35 +390,67 @@ test("fixtures are presigned, uploaded and committed", async () => {
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 0)
+    });
+    assert.equal(outcome.exitCode, 0);
     assert.deepEqual(consoleState.presigns, [
       { filename: "fixture.bin", path: "/sdcard/Download", size: 5 },
-    ])
-    assert.deepEqual(consoleState.puts, [5])
+    ]);
+    assert.deepEqual(consoleState.puts, [5]);
     assert.deepEqual(consoleState.commits, [
-      { key: "tenant/session/fixture.bin", path: "/sdcard/Download", filename: "fixture.bin" },
-    ])
+      {
+        key: "tenant/session/fixture.bin",
+        path: "/sdcard/Download",
+        filename: "fixture.bin",
+      },
+    ]);
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
 
 test("a device that never becomes ready is an infrastructure failure", async () => {
-  const consoleState = await startConsole()
-  consoleState.readyAfter = 1_000
+  const consoleState = await startConsole();
+  consoleState.readyAfter = 1_000;
   try {
-    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
     const outcome = await executeRun({
       spec: baseSpec({ timeout: 0 }),
       specDir: process.cwd(),
       api,
       log: quiet,
       ...fast,
-    })
-    assert.equal(outcome.exitCode, 2)
-    assert.deepEqual(consoleState.ends, [{ result: "failed" }])
+    });
+    assert.equal(outcome.exitCode, 2);
+    assert.deepEqual(consoleState.ends, [{ result: "failed" }]);
   } finally {
-    await consoleState.close()
+    await consoleState.close();
   }
-})
+});
+
+test("ciCoords reports the pull request head, not GitHub's merge commit", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "sd-")), "event.json");
+  writeFileSync(
+    path,
+    JSON.stringify({ pull_request: { head: { sha: "b".repeat(40) } } }),
+  );
+  const env = {
+    GITHUB_SHA: "m".repeat(40),
+    GITHUB_EVENT_PATH: path,
+    GITHUB_REPOSITORY: "acme/shop",
+  };
+  assert.equal(ciCoords(env).commit, "b".repeat(40));
+  assert.equal(ciCoords({ GITHUB_SHA: "c".repeat(40) }).commit, "c".repeat(40));
+});
+
+test("pullRequestUpload names the PR a build comes from, only on pull_request runs", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "sd-")), "event.json");
+  writeFileSync(
+    path,
+    JSON.stringify({ pull_request: { number: 42, head: { sha: "b".repeat(40) } } }),
+  );
+  assert.deepEqual(
+    pullRequestUpload({ GITHUB_EVENT_PATH: path, GITHUB_REPOSITORY: "acme/shop" }),
+    { repository: "acme/shop", pullNumber: 42, headSha: "b".repeat(40) },
+  );
+  assert.equal(pullRequestUpload({ GITHUB_REPOSITORY: "acme/shop" }), null);
+});
