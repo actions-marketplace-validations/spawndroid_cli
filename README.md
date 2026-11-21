@@ -5,6 +5,39 @@ Run Android tests on hosted devices from any CI.
 Upload a build, boot a real device, run your test command against it, and keep
 the result along with the JUnit report, logcat and screen recording.
 
+## Use it in GitHub Actions
+
+1. Create a free account at [app.spawndroid.io](https://app.spawndroid.io).
+   The free tier includes 200 device-minutes a month.
+2. Under **API & CI/CD → API keys**, create a key with the `upload` scope and
+   save it as the repository secret `SPAWNDROID_API_KEY`.
+3. Run `npx spawndroid init` locally to write `spawndroid.yaml`, then add:
+
+```yaml
+name: Android tests
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: ./gradlew assembleDebug
+      - uses: spawndroid/cli@v0.1.7
+        id: spawndroid
+        with:
+          api-key: ${{ secrets.SPAWNDROID_API_KEY }}
+      - if: always()
+        run: echo "Run: ${{ steps.spawndroid.outputs.run-url }}"
+```
+
+The device is torn down even when the job fails, and the JUnit report,
+logcat and recording stay on the run page.
+
 ## Install
 
 Node 20 or newer. Nothing to install for a one-off run:
@@ -103,13 +136,7 @@ failed. CI retry logic can key off that instead of re-running real failures.
 
 ## GitHub Actions
 
-```yaml
-- uses: spawndroid/cli@v0.1.7
-  with:
-    api-key: ${{ secrets.SPAWNDROID_API_KEY }}
-```
-
-The Action installs the CLI, runs `spawndroid run --config spawndroid.yaml`,
+Setup is [at the top](#use-it-in-github-actions). The Action installs the CLI, runs `spawndroid run --config spawndroid.yaml`,
 and exposes `session-id`, `run-url` and `result` as step outputs.
 
 ## Limits
