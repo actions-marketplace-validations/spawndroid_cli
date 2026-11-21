@@ -244,6 +244,39 @@ test("green command: passes the run, tears down and attaches JUnit", async () =>
   }
 });
 
+test("without a report setting, the Gradle reports the command wrote are attached", async () => {
+  const consoleState = await startConsole()
+  const dir = mkdtempSync(join(tmpdir(), "spawndroid-gradle-"))
+  // Two test classes, as Gradle writes them: one file each.
+  const write = [
+    "const fs = require('node:fs')",
+    "fs.mkdirSync('build/test-results/test', { recursive: true })",
+    "fs.writeFileSync('build/test-results/test/TEST-A.xml', '<?xml version=\"1.0\"?><testsuite name=\"A\"><testcase name=\"a\"/></testsuite>')",
+    "fs.writeFileSync('build/test-results/test/TEST-B.xml', '<?xml version=\"1.0\"?><testsuite name=\"B\"><testcase name=\"b\"><failure message=\"x\"/></testcase></testsuite>')",
+    "process.exit(1)",
+  ].join(";")
+  try {
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" })
+    const outcome = await executeRun({
+      spec: baseSpec({ command: [process.execPath, "-e", write] }),
+      specDir: dir,
+      api,
+      log: quiet,
+      env: withoutGithubEnv(),
+      ...fast,
+    })
+    assert.equal(outcome.exitCode, 1)
+    assert.equal(consoleState.reports.length, 1)
+    const xml = consoleState.reports[0]
+    assert.equal((xml.match(/<testcase\b/g) ?? []).length, 2)
+    assert.equal((xml.match(/<\?xml/g) ?? []).length, 1)
+    // Attached before the device is released.
+    assert.deepEqual(consoleState.events, ["create", "report", "end"])
+  } finally {
+    await consoleState.close()
+  }
+})
+
 test("failing command: exit 1 and a failed verdict", async () => {
   const consoleState = await startConsole();
   try {

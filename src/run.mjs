@@ -10,9 +10,10 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, relative, resolve } from "node:path";
 
 import { DEVICE_FILE_MAX_BYTES } from "./config.mjs";
+import { collectReports, mergeJUnit } from "./reports.mjs";
 
 export const EXIT_PASSED = 0;
 export const EXIT_TESTS_FAILED = 1;
@@ -226,6 +227,8 @@ export async function executeRun({
       log,
     });
 
+    // Reports written from here on belong to this run; older ones are stale.
+    const commandStartedAt = Date.now()
     const { code, signal, spawnError } = await runCommand({
       view,
       createView: started,
@@ -257,15 +260,14 @@ export async function executeRun({
     // Attach before teardown: the report route accepts a POST after the run
     // ends, but a report that lands while the session is still open cannot
     // race a teardown, and a failure here is a warning, never a lost verdict.
-    if (spec.report) {
-      await attachReport({
-        api,
-        sessionId,
-        reportPath: spec.report,
-        specDir,
-        log,
-      });
-    }
+    await attachReport({
+      api,
+      sessionId,
+      report: spec.report,
+      specDir,
+      since: commandStartedAt,
+      log,
+    });
     await teardown(result);
     return {
       exitCode: code === 0 ? EXIT_PASSED : EXIT_TESTS_FAILED,
@@ -475,19 +477,39 @@ function runCommand({
   });
 }
 
-async function attachReport({ api, sessionId, reportPath, specDir, log }) {
-  const file = resolve(specDir, reportPath);
-  let xml;
-  try {
-    xml = await readFile(file, "utf8");
-  } catch {
-    log(`warning: no JUnit report at ${reportPath} — attach skipped`);
+/** The console's limit for one report. */
+const MAX_REPORT_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Attach the run's JUnit XML: the file, folder or pattern in `report`, or,
+ * when unset, whatever the build tools wrote during the command. Several
+ * files are merged into one report. Never fails the run.
+ */
+async function attachReport({ api, sessionId, report, specDir, since, log }) {
+  const files = await collectReports({ dir: specDir, report, since });
+  if (files.length === 0) {
+    if (report) log(`warning: no JUnit report at ${report} — attach skipped`);
+    return;
+  }
+  const documents = [];
+  for (const file of files) {
+    const xml = await readFile(file, "utf8").catch(() => null);
+    if (xml?.trim()) documents.push(xml);
+  }
+  if (documents.length === 0) return;
+  const xml = mergeJUnit(documents);
+  const label =
+    documents.length === 1
+      ? relative(specDir, files[0])
+      : `${documents.length} JUnit files`;
+  if (Buffer.byteLength(xml, "utf8") > MAX_REPORT_BYTES) {
+    log(`warning: ${label} exceed the 8 MB report limit — attach skipped`);
     return;
   }
   try {
     await api.postReport(sessionId, xml);
-    log(`attached ${reportPath}`);
+    log(`attached ${label}`);
   } catch (error) {
-    log(`warning: could not attach ${reportPath}: ${error.message}`);
+    log(`warning: could not attach ${label}: ${error.message}`);
   }
 }

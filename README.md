@@ -46,7 +46,7 @@ version: 1
 app: app/build/outputs/apk/debug/app-debug.apk   # APK path, or an uploaded app slug
 command: [mvn, test]                             # string is split; list is exact argv
 profile: android-14-phone                        # optional device profile
-report: target/surefire-reports/TEST-com.example.CheckoutTest.xml
+report: target/surefire-reports                  # optional: file, folder or pattern
 timeout: 600                                     # seconds to wait for the device
 fixtures:                                        # optional files pushed after readiness
   - local: test/fixtures/sample.jpg
@@ -55,6 +55,13 @@ fixtures:                                        # optional files pushed after r
 
 Unknown keys are errors — a misspelled `timeout` must not silently fall back
 to the default.
+
+`report` is optional. It can be one JUnit XML file, a folder (every `.xml`
+inside it), or a pattern such as `app/build/test-results/**/TEST-*.xml`.
+Without it, `run` looks where the build tools write reports —
+`build/test-results/`, `build/outputs/androidTest-results/` (Gradle, any
+module) and `target/surefire-reports/` (Maven) — and attaches only the files
+your command wrote during this run. Several files are merged into one report.
 
 ## Commands
 
@@ -76,7 +83,8 @@ spawndroid report   <sessionId> --result passed|failed
    (`PLAN_RUNNER_LIMIT`, `PLAN_DEVICE_MINUTES_EXHAUSTED`) fail immediately.
 3. Waits up to `timeout` for the device, then pushes fixtures.
 4. Runs `command` locally on the runner with the session in its environment.
-5. Posts the JUnit report, tears the device down, and prints the run URL.
+5. Attaches the JUnit report (found automatically unless `report` names it),
+   tears the device down, and prints the run URL.
 
 Exported to the command:
 

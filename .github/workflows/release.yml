@@ -72,10 +72,10 @@ jobs:
       - name: Tag the release
         if: steps.version.outputs.published == 'false'
         run: |
+          # Runs only right after this version was first published, so the
+          # tag can be (re)pointed at exactly what npm now serves. A tag left
+          # by an earlier failed release of the same version is moved; a
+          # released version's tag never is, because this step is skipped.
           tag="v${{ steps.version.outputs.version }}"
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "$tag already exists; leaving it."
-          else
-            git tag "$tag"
-            git push origin "$tag"
-          fi
+          git tag -f "$tag"
+          git push -f origin "refs/tags/$tag"
