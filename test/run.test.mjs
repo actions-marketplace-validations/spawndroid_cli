@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { createApi } from "../src/api.mjs";
-import { ciCoords, executeRun } from "../src/run.mjs";
+import { ciCoords, executeRun, pullRequestUpload } from "../src/run.mjs";
 
 /**
  * A fake console: enough of the v1 shape that executeRun's real HTTP client
@@ -407,4 +407,17 @@ test("ciCoords reports the pull request head, not GitHub's merge commit", () => 
   };
   assert.equal(ciCoords(env).commit, "b".repeat(40));
   assert.equal(ciCoords({ GITHUB_SHA: "c".repeat(40) }).commit, "c".repeat(40));
+});
+
+test("pullRequestUpload names the PR a build comes from, only on pull_request runs", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "sd-")), "event.json");
+  writeFileSync(
+    path,
+    JSON.stringify({ pull_request: { number: 42, head: { sha: "b".repeat(40) } } }),
+  );
+  assert.deepEqual(
+    pullRequestUpload({ GITHUB_EVENT_PATH: path, GITHUB_REPOSITORY: "acme/shop" }),
+    { repository: "acme/shop", pullNumber: 42, headSha: "b".repeat(40) },
+  );
+  assert.equal(pullRequestUpload({ GITHUB_REPOSITORY: "acme/shop" }), null);
 });
