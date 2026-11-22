@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { createApi } from "../src/api.mjs";
-import { ciCoords, executeRun, pullRequestUpload } from "../src/run.mjs";
+import { ciCoords, executeRun, jobSummary, pullRequestUpload } from "../src/run.mjs";
 
 /**
  * A fake console: enough of the v1 shape that executeRun's real HTTP client
@@ -18,6 +18,7 @@ async function startConsole({
   createStatus = 429,
   readyFailures = 0,
   readyPackage = "com.example",
+  workspace = null,
 } = {}) {
   const state = {
     creates: [],
@@ -52,6 +53,11 @@ async function startConsole({
       response.writeHead(status, { "Content-Type": "application/json" });
       response.end(JSON.stringify(body));
     };
+
+    if (request.method === "GET" && url.pathname === "/api/v1/whoami") {
+      if (!workspace) return send(404, { error: "not found" });
+      return send(200, { tenantId: "org_1", scope: "upload", workspace });
+    }
 
     if (request.method === "POST" && url.pathname === "/api/v1/sessions") {
       state.events.push("create");
@@ -453,4 +459,67 @@ test("pullRequestUpload names the PR a build comes from, only on pull_request ru
     { repository: "acme/shop", pullNumber: 42, headSha: "b".repeat(40) },
   );
   assert.equal(pullRequestUpload({ GITHUB_REPOSITORY: "acme/shop" }), null);
+});
+
+test("names the workspace the run lands in before it starts", async () => {
+  const consoleState = await startConsole({
+    workspace: { name: "Acme", slug: "acme" },
+  });
+  const lines = [];
+  try {
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
+    const outcome = await executeRun({
+      spec: baseSpec(),
+      specDir: process.cwd(),
+      api,
+      log: (line) => lines.push(line),
+      ...fast,
+    });
+    assert.equal(outcome.exitCode, 0);
+    assert.deepEqual(outcome.workspace, { name: "Acme", slug: "acme" });
+    const named = lines.findIndex((line) => line.startsWith("workspace Acme"));
+    const session = lines.findIndex((line) => line.startsWith("session "));
+    assert.ok(named >= 0, lines.join("\n"));
+    assert.ok(named < session, "the workspace is named before the session");
+  } finally {
+    await consoleState.close();
+  }
+});
+
+test("a console without whoami still runs, without naming a workspace", async () => {
+  const consoleState = await startConsole();
+  const lines = [];
+  try {
+    const api = createApi({ baseUrl: consoleState.root, apiKey: "test" });
+    const outcome = await executeRun({
+      spec: baseSpec(),
+      specDir: process.cwd(),
+      api,
+      log: (line) => lines.push(line),
+      ...fast,
+    });
+    assert.equal(outcome.exitCode, 0);
+    assert.equal(outcome.workspace, null);
+    assert.ok(!lines.some((line) => line.startsWith("workspace ")));
+  } finally {
+    await consoleState.close();
+  }
+});
+
+test("the job summary names the result, the workspace and the run link", () => {
+  const md = jobSummary({
+    result: "passed",
+    runUrl: "https://app.spawndroid.io/dashboard/runs/sess_1",
+    workspace: { name: "Acme", slug: "acme" },
+  });
+  assert.match(md, /Passed/);
+  assert.match(md, /Acme/);
+  assert.match(md, /\(https:\/\/app\.spawndroid\.io\/dashboard\/runs\/sess_1\)/);
+});
+
+test("no summary without a run, and no workspace line when unknown", () => {
+  assert.equal(jobSummary({ result: "failed", runUrl: null, workspace: null }), null);
+  const md = jobSummary({ result: "failed", runUrl: "https://x/dashboard/runs/s", workspace: null });
+  assert.match(md, /Failed/);
+  assert.doesNotMatch(md, /Workspace/);
 });

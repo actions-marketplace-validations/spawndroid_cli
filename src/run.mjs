@@ -154,6 +154,19 @@ export function sessionEnv(view, appSlug, sessionId, createView) {
   );
 }
 
+/**
+ * Markdown for the GitHub job summary: the verdict, where the run landed and
+ * a link to it, so a green job can never point at an empty dashboard
+ * unnoticed. Null when no session started.
+ */
+export function jobSummary({ result, runUrl, workspace }) {
+  if (!runUrl) return null;
+  const verdict = result === "passed" ? "✅ Passed" : "❌ Failed";
+  const lines = ["### Spawndroid", "", `**${verdict}** · [Open the run](${runUrl})`];
+  if (workspace) lines.push("", `Workspace: **${workspace.name}** (\`${workspace.slug}\`)`);
+  return `${lines.join("\n")}\n`;
+}
+
 export async function executeRun({
   spec,
   specDir,
@@ -167,6 +180,7 @@ export async function executeRun({
   spawnImpl = spawn,
 }) {
   let sessionId = null;
+  let workspace = null;
   let ended = false;
   const childRef = { current: null };
   const runUrl = (id) => (id ? `${api.baseUrl}/dashboard/runs/${id}` : null);
@@ -188,6 +202,13 @@ export async function executeRun({
   process.on("SIGTERM", forward);
 
   try {
+    // Name the destination first: a key made in another workspace uploads
+    // and runs there, and a green job with an empty dashboard is otherwise
+    // the only sign.
+    workspace = (await api.workspace?.()) ?? null;
+    if (workspace) {
+      log(`workspace ${workspace.name} (${workspace.slug}) — ${api.baseUrl}/dashboard/runs`);
+    }
     const app = await resolveApp({ spec, specDir, api, log, env });
     const idempotencyKey = `spawndroid-${randomUUID()}`;
     const fields = {
@@ -253,6 +274,7 @@ export async function executeRun({
         sessionId,
         result: "failed",
         runUrl: runUrl(sessionId),
+        workspace,
       };
     }
 
@@ -274,6 +296,7 @@ export async function executeRun({
       sessionId,
       result,
       runUrl: runUrl(sessionId),
+        workspace,
     };
   } catch (error) {
     const infra = toInfra(error);
@@ -289,6 +312,7 @@ export async function executeRun({
       sessionId,
       result: "failed",
       runUrl: runUrl(sessionId),
+        workspace,
     };
   } finally {
     process.off("SIGINT", forward);

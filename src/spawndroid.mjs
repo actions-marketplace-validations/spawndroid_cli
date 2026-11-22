@@ -22,7 +22,7 @@ import {
   loadSpec,
 } from "./config.mjs"
 import { runInit } from "./init.mjs"
-import { EXIT_INFRA, EXIT_PASSED, executeRun, sessionEnv } from "./run.mjs"
+import { EXIT_INFRA, EXIT_PASSED, executeRun, jobSummary, sessionEnv } from "./run.mjs"
 
 const API_KEY = process.env.SPAWNDROID_API_KEY?.trim()
 const API_URL = (
@@ -88,6 +88,12 @@ async function writeGitHubOutputs({ sessionId, result, runUrl }) {
   const lines = [`session-id=${sessionId}`, `result=${result}`]
   if (runUrl) lines.push(`run-url=${runUrl}`)
   await appendFile(file, `${lines.join("\n")}\n`)
+}
+
+async function writeJobSummary(outcome) {
+  const file = process.env.GITHUB_STEP_SUMMARY
+  const summary = jobSummary(outcome)
+  if (file && summary) await appendFile(file, summary)
 }
 
 function parseSafe(argv, options) {
@@ -211,6 +217,7 @@ async function main() {
 
     const outcome = await executeRun({ spec, specDir, api: api() })
     await writeGitHubOutputs(outcome)
+    await writeJobSummary(outcome)
     if (outcome.runUrl) console.error(`run: ${outcome.runUrl}`)
     return outcome.exitCode
   }

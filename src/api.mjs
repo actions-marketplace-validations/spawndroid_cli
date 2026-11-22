@@ -126,6 +126,23 @@ export function createApi({
       }
     },
 
+    /**
+     * The workspace the key belongs to, or null when the console predates
+     * `whoami.workspace` or the read fails. Informational only: a run never
+     * fails on it.
+     */
+    async workspace() {
+      try {
+        const body = await request("/api/v1/whoami")
+        const ws = body?.workspace
+        return typeof ws?.name === "string" && typeof ws?.slug === "string"
+          ? { name: ws.name, slug: ws.slug }
+          : null
+      } catch {
+        return null
+      }
+    },
+
     /** `github` (optional): the pull request the build comes from. */
     async uploadApk(file, github = null) {
       const bytes = await readFile(file)
